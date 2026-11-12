@@ -396,7 +396,7 @@ if __name__ == "__main__" :
     # sigma_vec = np.array([0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32])
 
 
-    seed = 5                    # graine aleatoire (meme graine = meme catalogue)
+    seed = 11                     # graine aleatoire (meme graine = meme catalogue)
     np.random.seed(seed)
     function = 'error'             # 'error' = fonction de detection du Fortran
 
@@ -407,7 +407,7 @@ if __name__ == "__main__" :
     p = 1.1
     c = 0.0001
 
-    name= 'TB_6DISC_UNCLEAR_2710_ERROR_ETAS_erf_binned'
+    name= 'TB_6DISC_UNCLEAR_2710_ERROR_ETAS_erf'
     Ntot = 6000
     T_vec = [0, 10, 20, 40, 60, 70, 88, 100]
     N_vec = [(T_vec[k+1]-T_vec[k])*Ntot/100 for k in range(len(T_vec)-1)]
@@ -434,7 +434,6 @@ if __name__ == "__main__" :
 # =============================================================================
 #     FIGURE CONSTRUCTION
 # =============================================================================
-    mags = np.round(mags,1)
     color = cm.roma(np.linspace(0,1,len(b_vec)))
     fig, axs = plt.subplots(1,3,figsize=(18,5))
     plt.subplots_adjust(wspace=0.3, hspace=0.2)
@@ -512,7 +511,7 @@ if __name__ == "__main__" :
 #     Writting catalog (2 colonnes : temps, magnitude, trie en temps -> Fortran)
 # =============================================================================
     times = np.asarray(times)
-    mags = np.round(np.asarray(mags),1)
+    mags = np.asarray(mags)
     order = np.argsort(times)
     times, mags = times[order], mags[order]
     np.savetxt(name+'.in', np.column_stack([times, mags]), fmt='%.6f  %.4f')
