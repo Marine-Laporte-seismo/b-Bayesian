@@ -1,0 +1,26 @@
+# Fichiers compilés
+*.o
+*.mod
+*.exe
+*.a
+*.so
+fort.*
+
+# Résultats des inversions (on garde les scripts Python et le dossier vide)
+out/*
+!out/*.py
+!out/.gitkeep
+outputs/*
+!outputs/*.py
+!outputs/.gitkeep
+
+# Figures générées
+figures/Run_*/
+inputs/*_Synthetic_dataset.pdf
+
+# Python et éditeurs
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.vscode/
+.DS_Store
