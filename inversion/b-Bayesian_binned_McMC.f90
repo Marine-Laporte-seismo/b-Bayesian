@@ -9,19 +9,17 @@ program b_Bayesian_binned_McMC_detect
 !-----------------------------------------
 ! # Data 
 !----------------------------------------- 
-  character(LEN=*), parameter :: Magnitude_file = '../inputs/TB_6DISC_UNCLEAR_2710_ERROR_ETAS_erf.in' !path of the time-magnitude catalog
+  character(LEN=*), parameter :: Magnitude_file = '../inputs/TB_6DISC_UNCLEAR_2710_ERROR_ETAS_erf_binned.in' !path of the time-magnitude catalog
   integer, parameter :: N_data_max = 800000		! Number maximum of data
-  real*8, parameter :: delta_bin = 0.01	  		! Size of the Discrete Time Vector
-  integer, parameter :: T_bins = 200		    	! Binning of the catalog	
-  real*8, parameter :: min_bin = 0		      	! Min bin < min magnitudes for integration lower bound
-  real*8, parameter :: max_bin = 7.0		      	! Max bin > max magnitudes for integration upper bound
+  integer, parameter :: T_bins = 200		    	 ! Size of the discrete Time vector
+  real*8, parameter :: delta_bin = 0.1d0      			! Binning of the catalog
   
 !-----------------------------------------
 ! # Parameters of the Markov chain
 !-----------------------------------------
-  integer, parameter :: it_max = 10000000	    	! Total number of McMC iterations
-  integer, parameter :: it_burnin = 4000000		! Burn-in iterations
-  integer, parameter :: it_thin = 100	      		! Thinning for independency of accepted models
+  integer, parameter :: it_max = 20000000	    	! Total number of McMC iterations
+  integer, parameter :: it_burnin = 10000000		! Burn-in iterations
+  integer, parameter :: it_thin = 100      		! Thinning for independency of accepted models
   integer, parameter :: it_std = 1000000			! Number of iterations between two perturbation standard-deviation changes
   integer, parameter :: size_thin = (it_max/it_thin)	! For storing models every thinned iterations -> less heavy outputs
   integer, parameter :: size_std = (it_max/it_std)	! For changing the std of all parameters -> accelerating convergence
@@ -38,9 +36,9 @@ program b_Bayesian_binned_McMC_detect
   !-----------------------------------------
   ! # Definition de l'initialisation GR
   !-----------------------------------------  
-  real*8, parameter :: beta_init = 1.0d0*2.3d0, beta_stdi = 0.25d0, beta_std_birth = 0.5d0
-  real*8, parameter :: mu_init = 0.5d0, mu_stdi = 0.15d0, mu_std_birth = 0.3d0
-  real*8, parameter :: sigma_init = 0.3d0, sigma_stdi = 0.04d0, sigma_std_birth = 0.1d0
+  real*8, parameter :: beta_init = 1.0d0*2.3d0, beta_stdi = 0.1d0, beta_std_birth = 0.4d0
+  real*8, parameter :: mu_init = 0.5d0, mu_stdi = 0.1d0, mu_std_birth = 0.3d0
+  real*8, parameter :: sigma_init = 0.3d0, sigma_stdi = 0.05d0, sigma_std_birth = 0.1d0
 
   real*8, parameter :: beta_store = 0.025d0, mu_store = 0.025d0, sigma_store = 0.01d0
 
@@ -52,7 +50,8 @@ program b_Bayesian_binned_McMC_detect
   integer, parameter :: max_layers = 50		! Threshold on maximum layers	
   integer, parameter :: Nc_start_min = 10		! Initial number of layers min
   integer, parameter :: Nc_start_max = 20		! Initial number of layers max
-  real*8, parameter :: Disc_stdi = 1.5			! Initial standard deviation for layer perturbation 
+  real*8, parameter :: Disc_stdi = 2			! Initial standard deviation for layer perturbation
+  integer, parameter :: N_min_seg = 50		! Minimal number of events per segments
  
   !            ----------------------------------
   !              # END OF THE USER-DEFINED PARAMETERS
@@ -66,17 +65,15 @@ program b_Bayesian_binned_McMC_detect
 interface  
     ! A function that computes the loglikelihood of the model ("beta", "mu", "sigma") for a subset of data
     ! Considering a GR law described by Beta modulated by a detection function described by Mu/Sigma
-    ! No binning 
-    subroutine LogLikelihood_function_nobin_detect(mag_obs, N_data_subset, min_mags, &
-    						 New_Beta, New_Mu, New_Sigma, LogLikelihood_prop)
-  	real*8, intent(in) :: mag_obs(:)
-  	integer, intent(in) :: N_data_subset
-  	real*8, intent(in) :: min_mags
-  	real*8, intent(in) :: New_Beta
-  	real*8, intent(in) :: New_Mu
-  	real*8, intent(in) :: New_Sigma
-  	real*8, intent(out) :: LogLikelihood_prop
-    end subroutine LogLikelihood_function_nobin_detect
+    ! With binning
+    subroutine LogLikelihood_function_bin_detect(ibin_obs, N_data_subset, N_bins, delta_bin, min_bin, &
+                                                 beta_prop, mu_prop, sigma_prop, LogLikelihood)
+  	integer, intent(in) :: ibin_obs(:)
+  	integer, intent(in) :: N_data_subset, N_bins
+  	real*8, intent(in) :: delta_bin, min_bin
+  	real*8, intent(in) :: beta_prop, mu_prop, sigma_prop
+  	real*8, intent(out) :: LogLikelihood
+    end subroutine LogLikelihood_function_bin_detect
     
     subroutine sort_shell(arr)						! Fonction pour trier des listes d'entiers
   	integer, DIMENSION(:), INTENT(INOUT) :: arr
@@ -105,6 +102,9 @@ real*8 :: time_lim, time_max, time_min			! min/max times, bounds for random draw
 real*8 :: max_mags, min_mags				! min/max magnitudes in the full dataset
 ! magnitude bins
 integer :: bin_index, N_bins
+integer, allocatable :: ibin_obs(:)            ! indice de bin de magnitude de chaque evenement
+real*8 :: min_bin, max_bin                     ! bornes des bins de magnitude
+integer :: n_off                               ! magnitudes hors de la grille delta_bin
 
 integer :: Nc, New_Nc				! nombre de couches 
 !-----------------------------------------
@@ -240,12 +240,13 @@ real*8 :: b_true(3)=(/0.8*2.3,1.1*2.3,0.8*2.3/)
 integer :: io, j, i, k, it
 integer :: line, column
 real*8 :: t1, t2, comp_time, t3, t4, progress
-real*8 :: t_it(it_max),mean_t_it
+real*8 :: mean_t_it
 
 real*8 :: t_offset                       ! origine des temps soustraite au catalogue
 real*8 :: AR_move_seg                    ! taux d'acceptation des moves sur la dernière fenêtre
 integer :: j_start                       ! premier bin temporel d'un segment
-
+integer :: n_try                         ! number of attempts to build the initial model
+logical :: ok_init                       ! true if the initial model satisfies N_min_seg
 real*8, parameter :: pi = acos(-1.0d0)
 logical, parameter :: prior_only = .false.
 
@@ -368,10 +369,23 @@ open(unit=61, file="../outputs/input.txt",  status="replace", action="write")
 close(61)
  
 !-----------------------------------------
-! Etape 0.b : Create the list of mag_bins (bins =! uncertainty)2828
+! Etape 0.b : Create the list of mag_bins (bins =! uncertainty)
 !-----------------------------------------
 min_mags = minval(mag_obs) 
 max_mags = maxval(mag_obs) 
+
+
+min_bin = min_mags - 0.5d0*delta_bin           ! bins centres sur les magnitudes arrondies
+N_bins  = nint((maxval(mag_obs) - min_bin)/delta_bin) + 1
+max_bin = min_bin + N_bins*delta_bin
+allocate(ibin_obs(N_data_mag))
+do i = 1, N_data_mag
+   ibin_obs(i) = int((mag_obs(i) - min_bin)/delta_bin + 1.0d-6) + 1
+   if ((ibin_obs(i) < 1) .or. (ibin_obs(i) > N_bins)) stop "Erreur de binning des magnitudes"
+end do
+n_off = count(abs((mag_obs - min_mags)/delta_bin - nint((mag_obs - min_mags)/delta_bin)) > 1.0d-3)
+if (n_off > 0) write(*,*) "ATTENTION :", n_off, " magnitudes ne sont pas des multiples de delta_bin"
+write(*,*) 'Binning : delta_bin =', delta_bin, '  min_bin =', min_bin, '  N_bins =', N_bins
 !-----------------------------------------
 !-----------------------------------------
 ! Etape 0.c : Initialisation time variables
@@ -401,7 +415,7 @@ t_std = Disc_stdi			! Disc stdi correspond au vrai std
 !-----------------------------------------
 
 beta_bins = nint((beta_max - beta_min)/(beta_store)) + 1
-mu_bins = ((mu_max - mu_min)/(mu_store))+1
+mu_bins = nint((mu_max - mu_min)/(mu_store))+1
 sigma_bins = nint((sigma_max - sigma_min)/(sigma_store)) + 1
 write(*,*) "Beta Bins", beta_bins
 
@@ -437,31 +451,41 @@ Sigma_T_posterior = 0
   write(*,*) ". Initial number of discontinuities :", Nc
    
  
-  do k=1, Nc
-  	! Random draw of discontinuity time (not necessarily a catalog times = real between time_min time_max)
-  	!t_init = t_true(k)
-	t_init = time_lim + (ran3(ra)*(time_max-(2*time_lim)))
-
-	! a - we find the index associated with this random observation time in the T_bins vector
-    	index_ibins = ceiling(T_bins * t_init/(time_max))
-    	! b - we find the index associated with this random observation time in the data 	
-    	index_data = 0
-    	do i = 1, N_data_mag 
-    		if (times(i) .le. t_init) then 	
-    			index_data = i
-    		end if 
-    	end do				
-    	model_times(k) = t_init			! store the discontinuities times				
-    	model_ibins(k) = index_ibins		! store its index in the T_bins vector
-    	model_idata(k) = index_data		! store its index in the data vector
-    	model_T(index_ibins) = model_T(index_ibins) + 1		! assigns 1 to the location of a discontinuity [0,0,0,1,0,...] in the vector model_T(T_bins)
-    	Store_times_proposed(k,1) = t_init	! store the discontinuities times at each iteration
-    	Nc_total(1) = Nc			! store the number of layers accepted Nc at each iteration 
-   end do
-   call sort_shell_real(Store_times_proposed(:,1))
-   call sort_shell_real(model_times)
-   call sort_shell(model_ibins)
-   call sort_shell(model_idata)
+  ! Random draw of the initial discontinuities: redraw until every segment
+  ! contains at least N_min_seg events (one discontinuity is removed every 1000 attempts)
+  n_try = 0
+  do
+     n_try = n_try + 1
+     if (mod(n_try, 1000) == 0) Nc = Nc - 1
+     if (Nc < 1) stop "Cannot build an initial model: decrease N_min_seg"
+     model_times = 9999999
+     model_ibins = 9999999
+     model_idata = 9999999
+     do k = 1, Nc
+        model_times(k) = time_lim + (ran3(ra)*(time_max-(2*time_lim)))
+     end do
+     call sort_shell_real(model_times)
+     do k = 1, Nc
+        index_data = 0
+        do i = 1, N_data_mag
+           if (times(i) .le. model_times(k)) index_data = i
+        end do
+        model_idata(k) = index_data
+        model_ibins(k) = max(1, ceiling(T_bins * model_times(k)/time_max))
+     end do
+     ok_init = (model_idata(1) >= N_min_seg) .and. (N_data_mag - model_idata(Nc) >= N_min_seg)
+     do k = 2, Nc
+        if (model_idata(k) - model_idata(k-1) < N_min_seg) ok_init = .false.
+     end do
+     if (ok_init) exit
+  end do
+  model_T = 0
+  do k = 1, Nc
+     model_T(model_ibins(k)) = model_T(model_ibins(k)) + 1
+     Store_times_proposed(k,1) = model_times(k)
+  end do
+  Nc_total(1) = Nc
+  write(*,*) ". Initial number of discontinuities (with N_min_seg) :", Nc
    
 
    write(*,*) ". Initial model times :", model_times(1:Nc)
@@ -565,7 +589,10 @@ Sigma_T_posterior = 0
 
 
 
-		call LogLikelihood_function_nobin_detect(mag_obs(a_data:b_data),N_data_subset, min_mags, & 
+		!call LogLikelihood_function_nobin_detect(mag_obs(a_data:b_data),N_data_subset, min_mags, & 
+							
+		call LogLikelihood_function_bin_detect(ibin_obs(a_data:b_data), N_data_subset, N_bins,& 
+							delta_bin, min_bin, &
 							Acc_Beta, Acc_Mu, Acc_Sigma, Acc_Loglikelihood)
 	end if 	
 	
@@ -777,8 +804,8 @@ Sigma_T_posterior = 0
 
 			  	if ((t_new.ge.time_lim) .and. (t_new.le.(time_max-time_lim))) then 		! sinon do nothing
 			  		New_model_times(index_pert) = t_new	
-			  		index_ibins_old = ceiling(T_bins * t_old/time_max)			! on retrouve l'index associe a ce temps d'observation random dans le vecteur prop		
-			  		index_ibins = ceiling(T_bins * t_new/time_max)				! on retrouve l'index associe a ce temps d'observation random dans le vecteur prop
+			  		index_ibins_old = max(1, ceiling(T_bins * t_old/time_max))			! on retrouve l'index associe a ce temps d'observation random dans le vecteur prop		
+			  		index_ibins = max(1, ceiling(T_bins * t_new/time_max))			! on retrouve l'index associe a ce temps d'observation random dans le vecteur prop
 			  		New_model_T(index_ibins_old) = 0
 			  		New_model_T(index_ibins) = 1
 			  		New_model_ibins(index_pert) = index_ibins
@@ -849,7 +876,7 @@ Sigma_T_posterior = 0
 		  		New_model_idata(index_pert) = 9999999
 		  		New_model_ibins(index_pert) = 9999999
 		  		
-		  		index_ibins = ceiling(T_bins * t_new/time_max)
+		  		index_ibins = max(1, ceiling(T_bins * t_new/time_max))
 		  		New_model_T(index_ibins) = 0	! on supprime la discontinuite
 		  		
 		  		call sort_shell_real(New_model_times)
@@ -921,7 +948,7 @@ Sigma_T_posterior = 0
 		  		t_new = time_lim + (ran3(ra)*(time_max-(2*time_lim)))
 		  		New_model_times(index_pert) = t_new
 		  		
-				index_ibins = ceiling(T_bins * t_new/time_max)	! findig the index associated to this time in the time_bins = prop
+				index_ibins = max(1, ceiling(T_bins * t_new/time_max))	! findig the index associated to this time in the time_bins = prop
 		  		New_model_T(index_ibins) = 1
 		  		New_model_ibins(index_pert) = index_ibins
 		  		index_data = 0
@@ -1182,9 +1209,11 @@ Sigma_T_posterior = 0
 			else
 			    		
 					N_data_subset = size(mag_obs(a_data:b_data))
-					
-					call LogLikelihood_function_nobin_detect(mag_obs(a_data:b_data),N_data_subset, min_mags,&
-									 New_model_beta(k),New_model_mu(k), New_model_sigma(k), loglikelihood)
+					call LogLikelihood_function_bin_detect(ibin_obs(a_data:b_data), N_data_subset,&
+						 N_bins, delta_bin, min_bin, &
+						 New_model_beta(k),New_model_mu(k), New_model_sigma(k), loglikelihood)
+					!call LogLikelihood_function_nobin_detect(mag_obs(a_data:b_data),N_data_subset, min_mags,&
+									 
 					
 				
 			end if	
@@ -1197,7 +1226,8 @@ Sigma_T_posterior = 0
 
 		  end do
 		  
-		  
+		  ! Contrainte : chaque segment doit contenir au moins N_min_seg evenements
+		  if (minval(flag_ndata(1:New_Nc+1)) < N_min_seg) flag_unaccepted = 1
 		  !if (sum(flag_ndata(1:New_Nc+1)).ne.N_data_mag) stop "HEIN" 
 		  !write(*,*) ". Initial Log-likelihood :", Acc_loglikelihood_layers(1:Nc+1)
 		  Acc_Sum_Loglikelihood =  sum(Acc_loglikelihood_layers(1:Nc+1))  ! Normal on compare le proposed index_pert+1 avec le current index_pert
@@ -1579,7 +1609,6 @@ Sigma_T_posterior = 0
     	!-------------------------------------------------------------------------
 	CALL cpu_time(t3)  !Toc. end counting time
 	progress = (t3-t1)
-	t_it(it) = (t3-t4)
 	mean_t_it = (progress/it) * it_max
 	
 	if (mod(it,10000)==0) then ! talk
@@ -1611,7 +1640,7 @@ Sigma_T_posterior = 0
   write(*,*) "> End of inversion (resume)" 
   write(*,*) ". Total time of inversion in minutes : " , (comp_time/100.0/60.0)
   write(*,*)
-  write(*,*) size_thin, flag_thin
+
   ! Petit bilan des taux d'acceptance 
   AR_GEO = real(N_GEO_accept)/real(N_GEO)*100
   AR_move = real(N_move_accept)/real(N_move)*100
@@ -1702,6 +1731,7 @@ Sigma_T_posterior = 0
 	write(60,*) it_max, T_bins, comp_time/100.0/60.0
 	write(60,*) t_offset, time_max
 	write(60,*) beta_store, mu_store, sigma_store
+	write(60,*) delta_bin, min_bin, N_bins
  close(60)
 
 

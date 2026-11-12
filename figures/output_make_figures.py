@@ -225,6 +225,14 @@ if __name__ == "__main__" :
     mu_vec = np.array([0.8, 0.8,1.5, 0.5, 0.7, 0.9, 0.9])
     sigma_vec = np.array([0.35, 0.3, 0.2, 0.15,0.3,0.4, 0.15])
     
+    # T_vec = [0,  100]
+    # N_vec = [2987]  
+    
+    # b_vec =  np.array([0.7])*np.log(10)
+    # mu_vec = np.array([0.8])
+    # sigma_vec = np.array([0.35])
+    
+    
 
 
     
@@ -541,4 +549,3 @@ if __name__ == "__main__" :
     fig4.suptitle(Title4 +'\n'+Subtitle,fontweight="bold")
     fig4.savefig(os.path.join(out_path , out_name +'_Fig4_likelihood_Sigma.pdf'))
     plt.show()
- 
