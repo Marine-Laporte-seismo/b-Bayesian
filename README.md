@@ -181,4 +181,6 @@ It writes the catalog for the Fortran code and a text file with the true paramet
 ## 📝 License
  
 Academic use only. Please contact the author for permission to use, modify, or distribute this code.
+This project is distributed under the MIT License. See [LICENSE](LICENSE).
+
 
