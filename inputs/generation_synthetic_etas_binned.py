@@ -2,6 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from math import exp, sqrt, erf
+from datetime import date
+from scipy.special import ndtr, log_ndtr
+from scipy.optimize import minimize
 from cmcrameri import cm
 ### implement the probability of one change in time
 
@@ -9,7 +12,7 @@ from cmcrameri import cm
 
 def synthetic_dataset(N_samples, mu, sigma, b_val, function='gumbel'):
     """ Creates a synthetic catalog of N_sampels values of magnitudes
-    following the conjoint detection distribution (mu, sigma) 
+    following the conjoint detection distribution (mu, sigma)
     and the GR distribution associated to the input b_val
     The detection function can be chosen from :
         - full
@@ -17,7 +20,7 @@ def synthetic_dataset(N_samples, mu, sigma, b_val, function='gumbel'):
         - gumbel
         - exp
         - expdouble"""
-    
+
     i = 0
     M_distribution = np.zeros(N_samples)
     b_vec = np.linspace(b_val,b_val+0.4,N_samples)
@@ -26,7 +29,7 @@ def synthetic_dataset(N_samples, mu, sigma, b_val, function='gumbel'):
         x = np.random.exponential(1./b_vec[i])
         # modulation by the detection function
         if function == 'gumbel' :
-            q = exp(-exp(-((x-mu)/sigma))) 
+            q = exp(-exp(-((x-mu)/sigma)))
         elif function == 'full':
             q = 1
         elif function =='error':
@@ -34,7 +37,7 @@ def synthetic_dataset(N_samples, mu, sigma, b_val, function='gumbel'):
         elif function == 'exp':
             if x > mu :
                 q = 1 -( exp(-(x-mu)/sigma)*(1+(x-mu)/sigma +((x-mu)**2)/(2*sigma**2)))
-            else : 
+            else :
                 q = 0
         else :
             print('We do not recognize the detection function ! Choose between : gumbel, exp, full, error')
@@ -48,7 +51,7 @@ def synthetic_dataset(N_samples, mu, sigma, b_val, function='gumbel'):
 
 def etas(mu, alpha, barN, p, c, beta, tmax):
     """Draw all background earthquakes, and then the direct aftershocks of each consecutive earthquake.
-   
+
     Il y a +sieurs taux de fond mu(1), mu(2), ..., identifiés comme parent=-1, -2, ...
     #Paramètres : (mu) nombre moyen de séismes / unité de temps en l'absence d'interactions
     # (alpha) en présence d'interactions, le nombre moyen de répliques pour un choc principal
@@ -58,7 +61,7 @@ def etas(mu, alpha, barN, p, c, beta, tmax):
     # décroit en temps (t) en 1/(t+c)^{-p} [il faut ici p>1, typiquement p~1.1 ou 1.2],
     # (c) temps de coupure de la loi d'Omori, (beta) valeur de b de Gutenberg-Richter * log(10),
     # (tmax) durée de la série en unité de temps"""
-    
+
     #A = barN/(beta* c**(1-p))/((p-1)*(beta-alpha))
 
     A = barN / (beta * c**(1-p)/((p-1)*(beta-alpha)))
@@ -80,10 +83,12 @@ def etas(mu, alpha, barN, p, c, beta, tmax):
                 parent.append(-I[0])
 
     # cascade
+    # (l'ordre de traitement des evenements n'a pas d'importance dans un processus de
+    #  branchement : on ne trie qu'une seule fois a la fin, ce qui evite un tri par
+    #  evenement, tres lent pour les gros catalogues)
     if A > 0:
         nc = 1
-        #mmax = max(m) if m else 0
-        while t :
+        while nc <= len(t):
             tc = 0
             while True:
                 tmp = (tc + c)**(1 - p) + (p - 1) / (A * np.exp(alpha * m[nc - 1])) * np.log(np.random.rand())
@@ -93,127 +98,52 @@ def etas(mu, alpha, barN, p, c, beta, tmax):
                     if tc + t[nc - 1] < tmax:
                         n = n + 1
                         t.append(tc + t[nc - 1])
-                        new_m = -1 / beta * np.log(np.random.rand())
-                        m.append(new_m)
-                        # if new_m > mmax:
-                        #     mmax = new_m
+                        m.append(-1 / beta * np.log(np.random.rand()))
                         parent.append(nc)
                     else:
                         break
                 else:
                     break
-
-            perm = np.argsort(t)
-            t = np.array(t)[perm].tolist()
-            m = np.array(m)[perm].tolist()
-            parent = np.array(parent)[perm].tolist()
-
             nc = nc + 1
-            if nc > len(t):
-                break
 
-    if not t:
-        t = m = parent = -1
+    perm = np.argsort(t)
+    t = np.array(t)[perm].tolist()
+    m = np.array(m)[perm].tolist()
+    parent = np.array(parent)[perm].tolist()
     return t, m, parent
 
 
 
-def ETAS_synthetic_dataset_vntot(N_vec, T_vec, b_vec, mu_vec, sigma_vec, function='gumbel'):
+def ETAS_synthetic_dataset(N_vec, T_vec, b_vec, mu_vec, sigma_vec, function='error',
+                           mu_rate=[1], alpha=1.5, barN=0.95, p=1.1, c=0.0001):
     """ Creates a synthetic catalog of N_sampels values of magnitudes
-    following the conjoint detection distribution (mu, sigma) 
+    following the conjoint detection distribution (mu, sigma)
     and the GR distribution associated to the input b_val
     The detection function can be chosen from :
         - full
         - error
         - gumbel
         - exp
-        - expdouble"""
-    
-    ntot = 0
-    tmax = 0 
-    M_distribution = []
-    T_distribution = []
-    mu_rate = [1]  # Example values for mu
-    alpha = 2 # attention alpha < beta obligatoire sinon explosion
-    barN = 0.95
-    p = 1.1
-    c = 0.0001
-    
-    for i in range (len(b_vec)):
-        nsub = 0 
-        while nsub < int(round(N_vec[i])) :
-            beta = b_vec[i]
-            mu = mu_vec[i]
-            sigma = sigma_vec[i]
-            nt = int(round(N_vec[i]))-nsub
-            #print(nt)
-            t_full, m_full, parent = etas(mu_rate, alpha, barN, p, c, beta, nt)
-            print(t_full)
-            try : 
-                ncur = len(m_full)
-            except TypeError :
-                ncur = 0 
-                x = m_full
-                t = t_full
-            else :
-                for j in range(len(m_full)): 
-                    x = m_full[j]
-                    t = t_full[j]
-                    # modulation by the detection function
-                    if function == 'gumbel' :
-                        q = exp(-exp(-((x-mu)/sigma))) 
-                    elif function == 'full':
-                        q = 1
-                    elif function =='error':
-                        q=0.5+0.5*erf((x-mu)/(sigma*sqrt(2)))
-                    elif function == 'exp':
-                        if x > mu :
-                            q = 1 -( exp(-(x-mu)/sigma)*(1+(x-mu)/sigma +((x-mu)**2)/(2*sigma**2)))
-                        else : 
-                            q = 0
-                    else :
-                        print('We do not recognize the detection function ! Choose between : gumbel, exp, full, error')
-            
-            
-                    if np.random.rand() < q :
-                        ntot+=1
-                        nsub+=1
-                        t_q = t + tmax
-                        
-                        M_distribution.append( x)
-                        T_distribution.append(t_q)
-                        tmax= max(T_distribution)
-    return  T_distribution, M_distribution
+        - expdouble
+    N_vec : duree de chaque segment en nombre moyen de seismes de fond
+            (le nombre final d'evenements detectes est different)
+    b_vec : valeurs de beta = b*ln(10)"""
 
-def ETAS_synthetic_dataset(N_vec, T_vec, b_vec, mu_vec, sigma_vec, function='error'):
-    """ Creates a synthetic catalog of N_sampels values of magnitudes
-    following the conjoint detection distribution (mu, sigma) 
-    and the GR distribution associated to the input b_val
-    The detection function can be chosen from :
-        - full
-        - error
-        - gumbel
-        - exp
-        - expdouble"""
-    
     ntot = 0
-    tmax = 0 
+    tmax = 0
     M_distribution = []
     T_distribution = []
-    Liste_M = [[]] * len(b_vec)
-    Liste_T = [[]] * len(b_vec)
-    mu_rate = [1]  # Example values for mu
-    alpha = 1.5 # attention alpha < beta obligatoire sinon explosion
-    barN = 0.95
-    p = 1.1
-    c = 0.0001
-    
+    Liste_M = [[] for _ in range(len(b_vec))]
+    Liste_T = [[] for _ in range(len(b_vec))]
+    Alpha_used = []
+    N_raw = []
+
     for i in range (len(b_vec)):
-        print(i)
+        print('Segment', i+1)
         # -- init --
         M_subset = []
         T_subset = []
-        
+
         # Values b, mu sigma du subset
         t0 = T_vec[i]
         tvec = T_vec[i+1]-T_vec[i]
@@ -221,16 +151,25 @@ def ETAS_synthetic_dataset(N_vec, T_vec, b_vec, mu_vec, sigma_vec, function='err
         mu = mu_vec[i]
         sigma = sigma_vec[i]
         nt = int(round(N_vec[i]))
-        
-        # ETAS subset 
-        t_full, m_full, parent = etas(mu_rate, alpha, barN, p, c, beta, nt)
+
+        # ETAS exige alpha < beta, sinon A <= 0 et AUCUNE replique n'est generee
+        alpha_i = alpha
+        if alpha >= 0.9 * beta:
+            alpha_i = 0.9 * beta
+            print('  ATTENTION : alpha=%.2f trop proche de beta=%.2f -> alpha=%.2f pour ce segment'
+                  % (alpha, beta, alpha_i))
+        Alpha_used.append(alpha_i)
+
+        # ETAS subset
+        t_full, m_full, parent = etas(mu_rate, alpha_i, barN, p, c, beta, nt)
+        N_raw.append(len(m_full))
         tc_full = [t0+ ti * tvec/nt for ti in t_full]
         # Modulation by detection
-        for j in range(len(m_full)): 
+        for j in range(len(m_full)):
             x = m_full[j]
             t = tc_full[j]
             if function == 'gumbel' :
-                q = exp(-exp(-((x-mu)/sigma))) 
+                q = exp(-exp(-((x-mu)/sigma)))
             elif function == 'full':
                 q = 1
             elif function =='error':
@@ -238,12 +177,12 @@ def ETAS_synthetic_dataset(N_vec, T_vec, b_vec, mu_vec, sigma_vec, function='err
             elif function == 'exp':
                 if x > mu :
                     q = 1 -( exp(-(x-mu)/sigma)*(1+(x-mu)/sigma +((x-mu)**2)/(2*sigma**2)))
-                else : 
+                else :
                     q = 0
             else :
                 print('We do not recognize the detection function ! Choose between : gumbel, exp, full, error')
-    
-    
+
+
             if np.random.rand() < q :
                 ntot+=1
                 M_distribution.append(x)
@@ -251,13 +190,13 @@ def ETAS_synthetic_dataset(N_vec, T_vec, b_vec, mu_vec, sigma_vec, function='err
                 M_subset.append( x)
                 T_subset.append(t)
                 tmax= max(T_distribution)
-                
-            Liste_M[i] = M_subset
-            Liste_T[i] = T_subset
-            
-            
-    return T_distribution, M_distribution, Liste_M, Liste_T
-from cmcrameri import cm
+
+        Liste_M[i] = M_subset
+        Liste_T[i] = T_subset
+        print('  %d evenements generes, %d detectes' % (len(m_full), len(M_subset)))
+
+
+    return T_distribution, M_distribution, Liste_M, Liste_T, Alpha_used, N_raw
 
 
 def B_Positive_function(times, mags, w):
@@ -266,7 +205,7 @@ def B_Positive_function(times, mags, w):
     utilisant les différences positives de magnitudes suivant la distribution de Laplace
     Inputs :
         - mags : liste ou array de magnitudes (floats)
-        - times : liste ou array des temps (floats) associés aux magnitudes 
+        - times : liste ou array des temps (floats) associés aux magnitudes
         - w : taille de la fenetre (nb d'evenements/fenetre)
     Outputs :
         - b_positive : liste ou array de valeurs de b-positives
@@ -278,12 +217,12 @@ def B_Positive_function(times, mags, w):
     # init outputs
     b_positive= np.zeros(n_events-w)
     times_b_positive= np.zeros(n_events-w)
-    
+
     # Calcul des differences de magnitudes sur tout le catalogue
     for i in range (0, n_events-1):
-        differences_magnitudes[i] = mags[i+1] - mags[i]       
+        differences_magnitudes[i] = mags[i+1] - mags[i]
         differences_absolues[i] = abs(mags[i+1] - mags[i])
-        
+
     for m in range(len(differences_magnitudes)-(w-1)):
        differences_positives=[]
        flag_pos =0
@@ -294,10 +233,10 @@ def B_Positive_function(times, mags, w):
                flag_pos+=1 # Pour savoir sur combien d evenements on calcule effectivement la b-value
                differences_positives.append(valeur)
        windowed_mean = sum(np.ones(len(differences_positives)) * differences_positives) / len(differences_positives)
-       
+
        Minimum_difference = min(differences_absolues[m:m+w])
        # d'apres la formule de Laplace (Van der Elst 2021)
-       windowed_beta = 1/float(windowed_mean-Minimum_difference) 
+       windowed_beta = 1/float(windowed_mean-Minimum_difference)
        b_positive[m]=windowed_beta/np.log(10)  # On retrouve b_value = beta/2.3
 
     print("Valeur de b-value obtenue sur %s events sur fenetre de %s events" %(str(flag_pos),str(w)))
@@ -313,15 +252,15 @@ def Beta_Laplace_function(mags, w):
     flag=0
     for m in range(len(difference)-(w-1)):
        flag+=1
-       windowed_mean = sum(np.ones(w) * difference[m:m+w]) / w 
+       windowed_mean = sum(np.ones(w) * difference[m:m+w]) / w
        Minimum_difference = min(difference[m:m+w])
        windowed_beta = 1/float(windowed_mean-Minimum_difference)
        beta_positive[m]=windowed_beta/np.log(10)
     return beta_positive
 
 def Beta_GR_function(mags,w, Mc):
-    
-    
+
+
     #difference[0] = 0
     flag=0
     mags_sup = []
@@ -332,7 +271,7 @@ def Beta_GR_function(mags,w, Mc):
 
 
     mean = np.mean(mags_sup)
-       
+
     beta_GR = 1/float(mean- Mc)
     sigma_GR =  beta_GR/sqrt(len(mags_sup))
     return beta_GR, sigma_GR
@@ -352,20 +291,20 @@ def cumulative_distribution(magnitudes1, min_mag = None, max_mag = None, interva
                 defined as the maximum magnitude in the catlogue + 0.1 magnitude
                 units.
         interval: Width of magnitude bins for generating cumulative histogram
-                of earthquake recurrence. Default avlue 0.1 magnitude units.  
-    
+                of earthquake recurrence. Default avlue 0.1 magnitude units.
+
     """
         # If minimum magnitude is not specified, read all magnitudes
     if min_mag is not None:
         pass
     else:
         min_mag = -1.0
-        
+
 
     # If minimum magnitude is not specified default value to minimum in catalogue
     if min_mag == -1.0:
         min_mag = min(magnitudes1)
-            
+
 
     # If maximum magnitude is not specified default value to maximum in catalogue
     if max_mag is not None:
@@ -375,7 +314,7 @@ def cumulative_distribution(magnitudes1, min_mag = None, max_mag = None, interva
 
     num_eq = len(magnitudes1)
     max_mag_bin = max(magnitudes1) + 0.15
-    
+
     # Magnitude bins
     bins = np.arange(min_mag, max_mag_bin, interval)
 
@@ -399,6 +338,25 @@ def cumulative_distribution(magnitudes1, min_mag = None, max_mag = None, interva
     return cum_hist1[::-1],bins[::-1]
 
 
+def neg_loglike(params, m, Mmin):
+    """- log-vraisemblance GR x detection 'error' (meme formule que le Fortran)."""
+    b, mu, sigma = params
+    beta = b * np.log(10)
+    K = ndtr((Mmin - mu) / sigma) + np.exp(0.5 * (beta * sigma) ** 2 - beta * (mu - Mmin)) \
+        * ndtr(-(Mmin + beta * sigma ** 2 - mu) / sigma)
+    ll = log_ndtr((m - mu) / sigma).sum() + len(m) * (np.log(beta) - np.log(K)) \
+        - beta * (m - Mmin).sum()
+    return -ll
+
+
+def fit_segment(m, Mmin):
+    """Maximum de vraisemblance (b, mu, sigma) sur un segment, dans les bornes des priors Fortran."""
+    x0 = [1.0, np.median(m) - 0.3, 0.2]
+    bounds = [(0.5 * 2.3 / np.log(10), 2.0 * 2.3 / np.log(10)), (0.0, 4.0), (0.0001, 0.5)]
+    res = minimize(neg_loglike, x0, args=(m, Mmin), method='L-BFGS-B', bounds=bounds)
+    return res.x
+
+
 
 
 if __name__ == "__main__" :
@@ -406,69 +364,83 @@ if __name__ == "__main__" :
     # =============================================================================
     # # Construction du catalogue ETAS
     # =============================================================================
-    
+
     # # Example usage:
     # Transdimensional synth
     # T_vec = [0, 15, 20, 40, 60, 70, 88, 100]
-    # N_vec = [1500,500,2000,2000,1000,1800,1200]  
+    # N_vec = [1500,500,2000,2000,1000,1800,1200]
     # b_vec =  np.array([0.77,1,1.2,0.55,0.7,0.7,0.75])*np.log(10)
     # mu_vec = np.array([-0.2,0.01,-0.1,-0.15,-0.15,0.1,0.12])
     # sigma_vec = np.array([0.32,0.32,0.32,0.32,0.32,0.32,0.32])
-    
-    
-    
+
+
+
     # Simple - no transdimensional
     # T_vec = [0, 100]
-    # N_vec = [1000]  
+    # N_vec = [1000]
     # b_vec =  np.array([1.05])*np.log(10)
     # mu_vec = np.array([-0.14])
     # sigma_vec = np.array([0.19])
-    
+
 
     # T_vec = [0, 100]
-    # N_vec = [10000]  
+    # N_vec = [10000]
     # b_vec =  np.array([0.97])*np.log(10)
     # mu_vec = np.array([-0.02])
-    # sigma_vec = np.array([0.29])   
+    # sigma_vec = np.array([0.29])
     # name= 'TB_6DISC_2109_GUMB_5000_PY_v2'
     # T_vec = [0, 15, 20, 40, 60, 70, 88, 100]
-    # N_vec = [750,250,1000,1000,500,900,600]  
+    # N_vec = [750,250,1000,1000,500,900,600]
     # b_vec =  np.array([0.77, 1.4, 0.95, 0.6, 1.2, 0.75, 0.7])*np.log(10)
     # mu_vec = np.array([0.20, 0.9, 0.15, 0.1, 0.8, 0.10, 0.6])
     # sigma_vec = np.array([0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32])
-    
-    
-    name= 'TB_6DISC_UNCLEAR_0403_ERROR_ETAS_highmu_d'
-    Ntot = 8000
+
+
+    seed = 5                    # graine aleatoire (meme graine = meme catalogue)
+    np.random.seed(seed)
+    function = 'error'             # 'error' = fonction de detection du Fortran
+
+    # Parametres ETAS
+    mu_rate = [1]                  # taux de fond (evenements / unite de temps ETAS)
+    alpha = 1.5                   # attention alpha < beta obligatoire sinon explosion
+    barN = 0.8                    # taux de branchement (0.8 = cascades plus raisonnables)
+    p = 1.1
+    c = 0.0001
+
+    name= 'TB_6DISC_UNCLEAR_2710_ERROR_ETAS_erf_binned'
+    Ntot = 6000
     T_vec = [0, 10, 20, 40, 60, 70, 88, 100]
-    N_vec = [T_vec[1]*Ntot/100,(T_vec[2]-T_vec[1])*Ntot/100,(T_vec[3]-T_vec[2])*Ntot/100,(T_vec[4]-T_vec[3])*Ntot/100,(T_vec[5]-T_vec[4])*Ntot/100,(T_vec[6]-T_vec[5])*Ntot/100,(T_vec[7]-T_vec[6])*Ntot/100]  
-    b_vec =  np.array([0.7,1.1, 1.0, 1.0, 0.8, 0.7, 0.65])*np.log(10)
-    mu_vec = np.array([0.8, 0.8,1.5, 0.5, 0.75, 0.9, 0.9])
+    N_vec = [(T_vec[k+1]-T_vec[k])*Ntot/100 for k in range(len(T_vec)-1)]
+    b_vec =  np.array([0.7,1.1, 1.0, 1.0, 0.9, 0.7, 0.65])*np.log(10)
+    mu_vec = np.array([0.8, 0.8,1.5, 0.5, 0.7, 0.9, 0.9])
     sigma_vec = np.array([0.35, 0.3, 0.2, 0.15,0.3,0.4, 0.15])
     Mc = 1.8
 
-    
-    
-    times,mags , lm, lt = ETAS_synthetic_dataset(N_vec, T_vec, b_vec, mu_vec, sigma_vec, function='error')
 
-    print("Longueur du catalogue %f :"%(len(mags)))
-        
+
+    times,mags , lm, lt, alpha_used, N_raw = ETAS_synthetic_dataset(
+        N_vec, T_vec, b_vec, mu_vec, sigma_vec, function=function,
+        mu_rate=mu_rate, alpha=alpha, barN=barN, p=p, c=c)
+
+    print("Longueur du catalogue : %d"%(len(mags)))
+
     N_samples=len(mags)
-    
+
     bins1 = np.arange(0,6,0.1)
     bins2 = np.arange(0,6,0.05)
     x_count = np.arange(0,N_samples, 1)
-    
+
 
 # =============================================================================
 #     FIGURE CONSTRUCTION
-# =============================================================================  
+# =============================================================================
+    mags = np.round(mags,1)
     color = cm.roma(np.linspace(0,1,len(b_vec)))
     fig, axs = plt.subplots(1,3,figsize=(18,5))
     plt.subplots_adjust(wspace=0.3, hspace=0.2)
-    
-    
-    axs[0].set_xlim(0,100)
+
+
+    axs[0].set_xlim(T_vec[0],T_vec[-1])
     axs[0].set_ylim(0,max(mags)+0.5)
     for kk in range(len(T_vec)-1):
         axs[0].vlines(T_vec[kk+1], 0,max(mags), linestyle='--', lw=2,color='grey')
@@ -479,7 +451,7 @@ if __name__ == "__main__" :
 
 
 
-    
+
     for k in range(len(T_vec)-1):
         mags_subset = lm[k]
         n_subset = len(mags_subset)
@@ -491,7 +463,7 @@ if __name__ == "__main__" :
         # Création d'un dictionnaire de magnitude:frequence pour chaque décimale (peut aussi être réalisé avec pd.Dateframe())
         X = {x:lmag.count(x) for x in lmag}  ## Dictionnaire of magnitude:frequency for MLv - Seiscomp
         lmag_round, fmag_round = X.keys(), X.values()
-    
+
     axs[1].set_yscale('log')
     axs[1].set_xlabel('Magnitudes',fontsize=16)
     axs[1].set_ylabel('Log(N)',fontsize=16)
@@ -505,12 +477,12 @@ if __name__ == "__main__" :
     Mc= 1.8
     t_pos, b_pos  = B_Positive_function( times,mags, w)
     b_lap  = Beta_Laplace_function( mags, w)
-    b_aki , s_aki = Beta_GR_function(mags,w, Mc) 
+    b_aki , s_aki = Beta_GR_function(mags,w, Mc)
     axs[2].plot(times[int(w/2):-int(w/2)],b_pos, color='navy', linestyle='--',label = 'b Positive| w='+str(w))
-    axs[2].hlines(b_aki/np.log(10),0,100, color='black',linestyles='--',lw=2,label = 'b Aki (full) = %s+/-%s'%(str(round(b_aki/np.log(10),2)), round(s_aki/np.log(10),2)))
-    axs[2].hlines((b_aki+s_aki)/np.log(10),0,100, color='grey',linestyles='--',lw=1,label = 'B Aki (subsets)')
-    axs[2].hlines((b_aki-s_aki)/np.log(10),0,100, color='grey',linestyles='--',lw=1)
-        
+    axs[2].hlines(b_aki/np.log(10),T_vec[0],T_vec[-1], color='black',linestyles='--',lw=2,label = 'b Aki (full) = %s+/-%s'%(str(round(b_aki/np.log(10),2)), round(s_aki/np.log(10),2)))
+    axs[2].hlines((b_aki+s_aki)/np.log(10),T_vec[0],T_vec[-1], color='grey',linestyles='--',lw=1,label = 'B Aki (subsets)')
+    axs[2].hlines((b_aki-s_aki)/np.log(10),T_vec[0],T_vec[-1], color='grey',linestyles='--',lw=1)
+
     for k in range(len(T_vec)-1):
         mags_subset = lm[k]
         axs[2].hlines(b_vec[k]/np.log(10),T_vec[k],T_vec[k+1], color='red',linestyles='--',lw=3)
@@ -521,39 +493,74 @@ if __name__ == "__main__" :
         axs[2].hlines((b_GR+s_GR)/np.log(10),T_vec[k],T_vec[k+1], color='wheat',linestyles='--',lw=1)
         axs[2].hlines((b_GR-s_GR)/np.log(10),T_vec[k],T_vec[k+1], color='wheat',linestyles='--',lw=1)
     axs[2].legend(loc='upper right', fontsize= 12)
-        
-        
-    axs[2].set_xlim(0,100)
+
+
+    axs[2].set_xlim(T_vec[0],T_vec[-1])
     axs[2].set_ylim(0.4,1.5)
-    axs[2].set_xlabel('b-value',fontsize=16)
-    axs[2].set_ylabel('Log(N)',fontsize=16)
-    
-    # axs[3].set_xlim(0,100)
-    # axs[3].set_ylim(0.1,1.8)
-    # for kk in range(len(T_vec)):
-    #     axs[3].vlines(T_vec[kk], 0.1,1.8, linestyle='--', lw=2,color='grey', label='Fixed discontinuities')
-    # for di in range(len(T_vec)-1):
-    #     axs[3].hlines(mu_vec[di],T_vec[di],T_vec[di+1], color='blue',linestyles='--',lw=3)
-    # axs3b = axs[3].twinx()
-    # axs3b.plot(times[int(w/2):-int(w/2)],b_pos, color='green', linestyle='--',label = 'B Positive| w='+str(w))
+    axs[2].set_xlabel('Times',fontsize=16)
+    axs[2].set_ylabel('b-value',fontsize=16)
 
     fig.suptitle('Synthetic seismic dataset',fontsize=17)
     fig.savefig(name+'_Fig2_Synthetic_dataset.pdf', format = 'pdf')
-    
+
     plt.show()
-    
-    
-    
-    
+
+
+
+
 # =============================================================================
-#     Writting catalog
-# =============================================================================     
-    import csv
-    
-    with open(name+'.in', 'w') as f:
-        writer = csv.writer(f, delimiter='\t')
-        writer.writerows(zip(times,mags))
-        
+#     Writting catalog (2 colonnes : temps, magnitude, trie en temps -> Fortran)
+# =============================================================================
+    times = np.asarray(times)
+    mags = np.round(np.asarray(mags),1)
+    order = np.argsort(times)
+    times, mags = times[order], mags[order]
+    np.savetxt(name+'.in', np.column_stack([times, mags]), fmt='%.6f  %.4f')
+
+# =============================================================================
+#     Writting parameters file
+# =============================================================================
+    Mmin = mags.min()
+    fits = [fit_segment(np.asarray(lm[k]), Mmin) if len(lm[k]) > 10 else [np.nan]*3
+            for k in range(len(b_vec))]
+
     with open(name+'_inputs.txt', 'w') as f:
-        writer = csv.writer(f, delimiter='\t')
-        writer.writerows(zip(T_vec,N_vec, b_vec, mu_vec, sigma_vec))
+        f.write("# Test synthetique ETAS + detection - RJ-MCMC\n")
+        f.write("# Genere le %s\n" % date.today().isoformat())
+        f.write("catalogue          = %s.in\n" % name)
+        f.write("seed               = %d\n" % seed)
+        f.write("fonction_detection = %s\n" % function)
+        f.write("ETAS : mu_rate=%s  alpha=%s  barN=%s  p=%s  c=%s\n" % (mu_rate, alpha, barN, p, c))
+        f.write("nb_segments        = %d\n" % (len(b_vec)))
+        f.write("N_total (detectes) = %d\n" % len(mags))
+        f.write("mag_min / mag_max  = %.4f / %.4f\n" % (mags.min(), mags.max()))
+        f.write("temps min / max    = %.4f / %.4f\n\n" % (times.min(), times.max()))
+
+        f.write("# Parametres vrais par segment\n")
+        f.write("# N_fond = duree ETAS (nb moyen de seismes de fond), N_gen = evenements generes, N_det = detectes\n")
+        f.write("# %3s %8s %8s %8s %7s %7s %7s %7s %7s %7s %8s %8s\n" %
+                ('seg', 't_debut', 't_fin', 'N_fond', 'N_gen', 'N_det', 'b', 'beta', 'mu', 'sigma', 'alpha', 'mag_max'))
+        for k in range(len(b_vec)):
+            mmax = max(lm[k]) if len(lm[k]) > 0 else np.nan
+            f.write("  %3d %8.3f %8.3f %8.0f %7d %7d %7.3f %7.4f %7.3f %7.3f %8.3f %8.3f\n" %
+                    (k+1, T_vec[k], T_vec[k+1], N_vec[k], N_raw[k], len(lm[k]),
+                     b_vec[k]/np.log(10), b_vec[k], mu_vec[k], sigma_vec[k], alpha_used[k], mmax))
+
+        f.write("\n# Verification : maximum de vraisemblance par segment (bornes vraies connues)\n")
+        f.write("# (valable pour function='error' ; Mmin = minimum du catalogue entier, comme le Fortran)\n")
+        f.write("# %3s %7s %7s %8s %7s %8s %7s\n" % ('seg', 'b_vrai', 'b_MLE', 'mu_vrai', 'mu_MLE', 'sig_vrai', 'sig_MLE'))
+        for k in range(len(b_vec)):
+            f.write("  %3d %7.3f %7.3f %8.3f %7.3f %8.3f %7.3f\n" %
+                    (k+1, b_vec[k]/np.log(10), fits[k][0], mu_vec[k], fits[k][1], sigma_vec[k], fits[k][2]))
+
+        f.write("\n# --- A copier dans plot_results_RJMCMC.py (avec synthetics='True') ---\n")
+        f.write("T_vec = %s\n" % list(T_vec))
+        f.write("N_vec = %s\n" % [len(lm[k]) for k in range(len(b_vec))])
+        f.write("b_vec = np.array(%s)*np.log(10)\n" % [float(round(float(b)/np.log(10), 4)) for b in b_vec])
+        f.write("mu_vec = np.array(%s)\n" % [float(x) for x in mu_vec])
+        f.write("sigma_vec = np.array(%s)\n" % [float(x) for x in sigma_vec])
+        f.write("\n# --- Dans le Fortran ---\n")
+        f.write("# Magnitude_file = '../inputs/%s.in'\n" % name)
+
+    print("Catalogue  : %s.in" % name)
+    print("Parametres : %s_inputs.txt" % name)

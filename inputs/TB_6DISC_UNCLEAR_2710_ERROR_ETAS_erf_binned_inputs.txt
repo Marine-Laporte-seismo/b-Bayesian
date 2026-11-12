@@ -1,0 +1,42 @@
+# Test synthetique ETAS + detection - RJ-MCMC
+# Genere le 2026-10-27
+catalogue          = TB_6DISC_UNCLEAR_2710_ERROR_ETAS_erf_binned.in
+seed               = 5
+fonction_detection = error
+ETAS : mu_rate=[1]  alpha=1.5  barN=0.8  p=1.1  c=0.0001
+nb_segments        = 7
+N_total (detectes) = 2962
+mag_min / mag_max  = 0.0000 / 4.7000
+temps min / max    = 0.0251 / 99.9572
+
+# Parametres vrais par segment
+# N_fond = duree ETAS (nb moyen de seismes de fond), N_gen = evenements generes, N_det = detectes
+# seg  t_debut    t_fin   N_fond   N_gen   N_det       b    beta      mu   sigma    alpha  mag_max
+    1    0.000   10.000      600     893     267   0.700  1.6118   0.800   0.350    1.451    4.187
+    2   10.000   20.000      600    1503     255   1.100  2.5328   0.800   0.300    1.500    3.485
+    3   20.000   40.000     1200    2889      91   1.000  2.3026   1.500   0.200    1.500    3.362
+    4   40.000   60.000     1200    3044    1052   1.000  2.3026   0.500   0.150    1.500    3.738
+    5   60.000   70.000      600    1646     482   0.900  2.0723   0.700   0.300    1.500    4.191
+    6   70.000   88.000     1080    1699     520   0.700  1.6118   0.900   0.400    1.451    4.570
+    7   88.000  100.000      720    1141     295   0.650  1.4967   0.900   0.150    1.347    4.729
+
+# Verification : maximum de vraisemblance par segment (bornes vraies connues)
+# (valable pour function='error' ; Mmin = minimum du catalogue entier, comme le Fortran)
+# seg  b_vrai   b_MLE  mu_vrai  mu_MLE sig_vrai sig_MLE
+    1   0.700   0.691    0.800   0.780    0.350   0.335
+    2   1.100   1.203    0.800   0.815    0.300   0.296
+    3   1.000   1.238    1.500   1.515    0.200   0.195
+    4   1.000   1.062    0.500   0.526    0.150   0.159
+    5   0.900   0.878    0.700   0.693    0.300   0.301
+    6   0.700   0.739    0.900   0.928    0.400   0.396
+    7   0.650   0.656    0.900   0.926    0.150   0.165
+
+# --- A copier dans plot_results_RJMCMC.py (avec synthetics='True') ---
+T_vec = [0, 10, 20, 40, 60, 70, 88, 100]
+N_vec = [267, 255, 91, 1052, 482, 520, 295]
+b_vec = np.array([0.7, 1.1, 1.0, 1.0, 0.9, 0.7, 0.65])*np.log(10)
+mu_vec = np.array([0.8, 0.8, 1.5, 0.5, 0.7, 0.9, 0.9])
+sigma_vec = np.array([0.35, 0.3, 0.2, 0.15, 0.3, 0.4, 0.15])
+
+# --- Dans le Fortran ---
+# Magnitude_file = '../inputs/TB_6DISC_UNCLEAR_2710_ERROR_ETAS_erf_binned.in'
